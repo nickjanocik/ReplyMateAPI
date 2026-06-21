@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "scripts": {
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:test": "supabase test db",
+    "functions:serve": "supabase functions serve --env-file .env.local"
+  },
+  "devDependencies": {
+    "supabase": "2.107.0"
+  }
+}

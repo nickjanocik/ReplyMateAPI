@@ -40,9 +40,10 @@ scripts/smoke.sh              authenticated end-to-end curl smoke test
 
 ```bash
 cp .env.example .env.local
-supabase start
-supabase db reset
-supabase status
+npm install
+npm run db:start
+npm run db:reset
+npx supabase status
 ```
 
 Copy the local URL, anon key, and service-role key printed by `supabase status` into `.env.local`. Add `OPENAI_API_KEY` and set `ALLOWED_ORIGINS` to exact comma-separated frontend origins.
@@ -50,7 +51,7 @@ Copy the local URL, anon key, and service-role key printed by `supabase status` 
 Serve all functions with the local environment:
 
 ```bash
-supabase functions serve --env-file .env.local
+npm run functions:serve
 ```
 
 The browser should use its normal Supabase client. `supabase.functions.invoke("v1-projects", ...)` automatically sends the active session token; raw requests must include both `Authorization: Bearer <user-jwt>` and `apikey: <anon-key>`.
@@ -63,7 +64,7 @@ Point it at the local stack and provide a test account:
 
 ```bash
 export SUPABASE_URL="http://127.0.0.1:54321"
-export SUPABASE_ANON_KEY="$(supabase status -o env | sed -n 's/^ANON_KEY=//p' | tr -d '"')"
+export SUPABASE_ANON_KEY="$(npx supabase status -o env | sed -n 's/^ANON_KEY=//p' | tr -d '"')"
 export REPLYMATE_EMAIL="tester@example.com"
 export REPLYMATE_PASSWORD="replace-with-a-test-password"
 
