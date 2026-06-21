@@ -27,18 +27,18 @@ as $$
     ks.title,
     kc.content,
     kc.metadata,
-    1 - (kc.embedding <=> query_embedding) as similarity
+    1 - (kc.embedding operator(extensions.<=>) query_embedding) as similarity
   from public.knowledge_chunks kc
   join public.knowledge_sources ks
     on ks.id = kc.source_id and ks.project_id = kc.project_id
   where kc.project_id = match_project_id
     and ks.status = 'ready'
     and public.is_project_member(match_project_id)
-    and 1 - (kc.embedding <=> query_embedding) >= greatest(
+    and 1 - (kc.embedding operator(extensions.<=>) query_embedding) >= greatest(
       -1.0,
       least(1.0, similarity_threshold)
     )
-  order by kc.embedding <=> query_embedding
+  order by kc.embedding operator(extensions.<=>) query_embedding
   limit least(greatest(match_count, 1), 20);
 $$;
 
@@ -51,4 +51,3 @@ grant execute on function public.match_project_chunks(
 
 comment on table public.job_queue is
   'Synchronous v1 job ledger. TODO: add atomic claim/retry RPCs when moving ingestion to Cloudflare Queues or another worker.';
-
