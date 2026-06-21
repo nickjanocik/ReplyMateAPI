@@ -1,0 +1,49 @@
+project_id = "replymate-api"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/**"]
+enable_signup = true
+
+[storage]
+enabled = true
+file_size_limit = "10MiB"
+
+[functions.v1-projects]
+verify_jwt = true
+
+[functions.v1-context]
+verify_jwt = true
+
+[functions.v1-upload]
+verify_jwt = true
+
+[functions.v1-chat]
+verify_jwt = true
+
+[functions.v1-billing-webhook]
+verify_jwt = false
+
+[functions.v1-twilio-webhook]
+verify_jwt = false
+
