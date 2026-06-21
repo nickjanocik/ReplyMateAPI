@@ -55,6 +55,40 @@ supabase functions serve --env-file .env.local
 
 The browser should use its normal Supabase client. `supabase.functions.invoke("v1-projects", ...)` automatically sends the active session token; raw requests must include both `Authorization: Bearer <user-jwt>` and `apikey: <anon-key>`.
 
+## API test CLI
+
+The repository includes `scripts/replymate.ts`, a small Deno client for authentication, project/member management, text ingestion, signed file upload, source listing/deletion, chat, and a cleanup-by-default end-to-end smoke test.
+
+Point it at the local stack and provide a test account:
+
+```bash
+export SUPABASE_URL="http://127.0.0.1:54321"
+export SUPABASE_ANON_KEY="$(supabase status -o env | sed -n 's/^ANON_KEY=//p' | tr -d '"')"
+export REPLYMATE_EMAIL="tester@example.com"
+export REPLYMATE_PASSWORD="replace-with-a-test-password"
+
+# Create the account once. If confirmation is enabled, confirm it before continuing.
+deno task api -- auth signup
+
+# Verify credentials, then exercise the complete API including OpenAI and Storage.
+deno task api -- auth whoami
+deno task api -- smoke
+```
+
+Use `REPLYMATE_ACCESS_TOKEN` instead of email/password when testing an existing session. The CLI never writes credentials or tokens to disk.
+
+```bash
+deno task api -- help
+deno task api -- projects list
+deno task api -- projects create "Launch Agent"
+deno task api -- context add PROJECT_UUID "Facts" "The launch color is cobalt blue."
+deno task api -- upload PROJECT_UUID ./notes.md
+deno task api -- chat PROJECT_UUID "What is the launch color?"
+deno task api -- smoke --keep  # retain the generated project for inspection
+```
+
+The smoke command creates a project, embeds text, uploads and processes Markdown, performs grounded chat, checks returned sources/conversations, and deletes the temporary project unless `--keep` is supplied.
+
 ## Environment variables
 
 | Variable | Required | Purpose |
@@ -252,6 +286,22 @@ export ACCESS_TOKEN="A_SIGNED_IN_USER_JWT"
 
 The smoke test creates a project, ingests text, lists sources, chats, and deletes the source. It intentionally retains the project for inspection.
 
+## GitHub remote
+
+The repository is initialized and committed locally, but no remote is configured or pushed. To create a new private GitHub repository with GitHub CLI:
+
+```bash
+gh auth login
+gh repo create ReplyMateAPI --private --source=. --remote=origin --push
+```
+
+To use an existing empty GitHub repository instead:
+
+```bash
+git remote add origin git@github.com:YOUR_ACCOUNT/ReplyMateAPI.git
+git push -u origin main
+```
+
 ## Limits and future queue migration
 
 Default project caps are 100,000 normalized characters/source, 500 chunks/project, 100 chat attempts per rolling 24 hours, and 5 MB/file. Only owners/admins can change them, within database-wide ceilings.
@@ -262,4 +312,3 @@ Before moving to Cloudflare Queues or another worker:
 2. Add retry backoff, stale-lock recovery, idempotency keys, and abandoned-upload cleanup.
 3. Publish only `source_id`; keep raw project content in Supabase.
 4. Preserve the current source/job/run status transitions and usage records.
-

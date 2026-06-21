@@ -1,0 +1,11 @@
+{
+  "tasks": {
+    "api": "deno run --allow-env --allow-read --allow-net scripts/replymate.ts",
+    "verify": "deno task --config supabase/functions/deno.json lint && deno task --config supabase/functions/deno.json check && deno task --config supabase/functions/deno.json test"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "semiColons": true,
+    "singleQuote": false
+  }
+}
