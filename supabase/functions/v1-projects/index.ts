@@ -206,7 +206,8 @@ Deno.serve(apiHandler(async (req) => {
 
   if (req.method === "POST") {
     const values = projectValues(input, true);
-    const { data, error } = await supabase.from("projects").insert({ ...values, owner_id: user.id })
+    const admin = createAdminClient();
+    const { data, error } = await admin.from("projects").insert({ ...values, owner_id: user.id })
       .select(PROJECT_FIELDS).single();
     if (error) {
       throw new ApiError(500, "DATABASE_ERROR", "Could not create the project.", error.message);
