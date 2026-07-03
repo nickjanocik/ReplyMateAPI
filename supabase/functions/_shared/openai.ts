@@ -77,10 +77,40 @@ async function openAIRequest<T>(
 
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = payload && typeof payload === "object" && "error" in payload
-      ? JSON.stringify((payload as { error: unknown }).error)
+    const providerError = payload && typeof payload === "object" && "error" in payload
+      ? (payload as { error: Record<string, unknown> }).error
+      : null;
+    const providerMessage = typeof providerError?.message === "string"
+      ? providerError.message
       : `HTTP ${response.status}`;
-    throw new ApiError(502, "OPENAI_ERROR", "The model provider rejected the request.", message);
+    const providerCode = typeof providerError?.code === "string" ? providerError.code : null;
+    const providerType = typeof providerError?.type === "string" ? providerError.type : null;
+
+    if (providerCode === "insufficient_quota" || providerType === "insufficient_quota") {
+      throw new ApiError(
+        502,
+        "OPENAI_QUOTA_EXCEEDED",
+        "OpenAI quota is exhausted for the configured API key.",
+        providerMessage,
+      );
+    }
+    if (providerCode === "model_not_found" || providerCode === "invalid_model") {
+      throw new ApiError(
+        502,
+        "OPENAI_MODEL_UNAVAILABLE",
+        "The configured OpenAI model is not available to this API key.",
+        providerMessage,
+      );
+    }
+    if (providerCode === "rate_limit_exceeded" || providerType === "rate_limit_exceeded") {
+      throw new ApiError(
+        502,
+        "OPENAI_RATE_LIMITED",
+        "OpenAI rate limited the request.",
+        providerMessage,
+      );
+    }
+    throw new ApiError(502, "OPENAI_ERROR", "The model provider rejected the request.", providerMessage);
   }
   return payload as T;
 }

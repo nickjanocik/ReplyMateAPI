@@ -74,3 +74,30 @@ Deno.test("OpenAI failures become stable API errors", async () => {
     "model provider rejected",
   );
 });
+
+Deno.test("OpenAI quota failures become actionable API errors", async () => {
+  Deno.env.set("OPENAI_API_KEY", "test-key");
+  const failingFetcher: typeof fetch = () =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "You exceeded your current quota.",
+            type: "insufficient_quota",
+            code: "insufficient_quota",
+          },
+        }),
+        { status: 429 },
+      ),
+    );
+  const error = await assertRejects(
+    () => createChatResponse({
+      model: "gpt-5.4-nano",
+      instructions: "Use context.",
+      messages: [{ role: "user", content: "Question" }],
+    }, failingFetcher),
+    ApiError,
+    "quota is exhausted",
+  );
+  assertEquals(error.code, "OPENAI_QUOTA_EXCEEDED");
+});
