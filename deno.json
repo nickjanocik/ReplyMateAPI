@@ -1,6 +1,8 @@
 {
+  "nodeModulesDir": "auto",
   "tasks": {
     "api": "deno run --allow-env --allow-read --allow-net scripts/replymate.ts",
+    "gui": "deno run --allow-read=tools/api-workbench,.env.local,.env.example,supabase/.temp/project-ref --allow-net=127.0.0.1:4173,localhost:4173 scripts/workbench_server.ts",
     "verify": "deno task --config supabase/functions/deno.json lint && deno task --config supabase/functions/deno.json check && deno task --config supabase/functions/deno.json test"
   },
   "fmt": {

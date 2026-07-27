@@ -22,7 +22,7 @@ port = 54324
 [auth]
 enabled = true
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["http://localhost:3000/**"]
+additional_redirect_urls = ["http://localhost:3000/**", "http://localhost:3001/**", "http://127.0.0.1:3001/**", "http://127.0.0.1:4173/**", "http://localhost:4173/**"]
 enable_signup = true
 
 [storage]
@@ -41,9 +41,14 @@ verify_jwt = true
 [functions.v1-chat]
 verify_jwt = true
 
+[functions.v1-account]
+verify_jwt = true
+
+[functions.v1-outreach]
+verify_jwt = true
+
 [functions.v1-billing-webhook]
 verify_jwt = false
 
 [functions.v1-twilio-webhook]
 verify_jwt = false
-

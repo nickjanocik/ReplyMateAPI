@@ -28,6 +28,53 @@ export const EMBEDDING_MODEL_PRICES: Readonly<Record<string, number>> = {
 
 type Fetcher = typeof fetch;
 
+function providerMode(): "live" | "mock" {
+  const mode = (Deno.env.get("OPENAI_MODE") ?? "live").toLowerCase();
+  if (mode === "live" || mode === "mock") return mode;
+  throw new ApiError(500, "SERVER_MISCONFIGURED", "OPENAI_MODE must be live or mock.");
+}
+
+function hashToken(token: string): number {
+  let value = 2166136261;
+  for (let index = 0; index < token.length; index++) {
+    value ^= token.charCodeAt(index);
+    value = Math.imul(value, 16777619);
+  }
+  return value >>> 0;
+}
+
+function mockEmbedding(input: string): number[] {
+  const vector = Array<number>(EMBEDDING_DIMENSIONS).fill(0);
+  const words = input.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const features = [
+    ...words,
+    ...words.slice(0, -1).map((word, index) => `${word}_${words[index + 1]}`),
+  ];
+  for (const feature of features) vector[hashToken(feature) % EMBEDDING_DIMENSIONS] += 1;
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  if (magnitude) return vector.map((value) => value / magnitude);
+  vector[0] = 1;
+  return vector;
+}
+
+function mockChatContent(instructions: string, messages: ConversationMessage[]): string {
+  const latest = messages.at(-1)?.content ?? "";
+  if (instructions.includes("drafting a consented business SMS")) {
+    const name = latest.match(/^Contact name:\s*(.+)$/m)?.[1]?.trim();
+    const goal = latest.match(/^Outreach goal:\s*([\s\S]+)$/m)?.[1]?.trim() ||
+      "Thank you for connecting with us.";
+    const greeting = name && name !== "unknown" ? `Hi ${name}, ` : "Hi, ";
+    return `${greeting}${goal}`.slice(0, 480);
+  }
+  const context = instructions.split("Retrieved project context:\n")[1];
+  if (!context) {
+    return "I don't have relevant project context to answer that yet.";
+  }
+  const grounded = context.replace(/^\[Source[^\n]*\]\s*/gm, "").replace(/\s+/g, " ").trim();
+  if (!grounded) return "I don't have relevant project context to answer that yet.";
+  return `Based on the project context: ${grounded.slice(0, 700)}`;
+}
+
 function apiKey(): string {
   const value = Deno.env.get("OPENAI_API_KEY");
   if (!value) throw new ApiError(500, "SERVER_MISCONFIGURED", "OPENAI_API_KEY is not configured.");
@@ -110,7 +157,12 @@ async function openAIRequest<T>(
         providerMessage,
       );
     }
-    throw new ApiError(502, "OPENAI_ERROR", "The model provider rejected the request.", providerMessage);
+    throw new ApiError(
+      502,
+      "OPENAI_ERROR",
+      "The model provider rejected the request.",
+      providerMessage,
+    );
   }
   return payload as T;
 }
@@ -128,6 +180,13 @@ export async function createEmbeddings(
     throw new ApiError(400, "EMPTY_EMBEDDING_INPUT", "Embedding input cannot be empty.");
   }
   const model = getEmbeddingModel();
+  if (providerMode() === "mock") {
+    return {
+      embeddings: inputs.map(mockEmbedding),
+      inputTokens: inputs.reduce((sum, input) => sum + Math.ceil(input.length / 4), 0),
+      model,
+    };
+  }
   const payload = await openAIRequest<EmbeddingsResponse>("/embeddings", {
     model,
     input: inputs,
@@ -171,6 +230,23 @@ export async function createChatResponse(
   fetcher: Fetcher = fetch,
 ): Promise<{ content: string; usage: TokenUsage; model: string }> {
   const model = getChatModel(options.model);
+  if (providerMode() === "mock") {
+    const content = mockChatContent(options.instructions, options.messages);
+    return {
+      content,
+      model,
+      usage: {
+        inputTokens: Math.ceil(
+          (options.instructions.length + options.messages.reduce(
+            (sum, message) => sum + message.content.length,
+            0,
+          )) / 4,
+        ),
+        cachedInputTokens: 0,
+        outputTokens: Math.ceil(content.length / 4),
+      },
+    };
+  }
   const payload = await openAIRequest<ResponsesResponse>("/responses", {
     model,
     instructions: options.instructions,

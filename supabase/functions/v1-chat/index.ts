@@ -1,4 +1,9 @@
-import { createAdminClient, requireProject, requireUser } from "../_shared/auth.ts";
+import {
+  createAdminClient,
+  requireProject,
+  requireProjectRole,
+  requireUser,
+} from "../_shared/auth.ts";
 import { ApiError, apiHandler, jsonResponse, requireMethod } from "../_shared/errors.ts";
 import {
   createChatResponse,
@@ -11,6 +16,19 @@ import { buildRagInstructions, compactHistory, conversationTitle } from "../_sha
 import type { ConversationMessage, RetrievedChunk } from "../_shared/types.ts";
 import { completeAgentRun, recordUsage, startAgentRun } from "../_shared/usage.ts";
 import { readJson, stringField, uuidField } from "../_shared/validation.ts";
+
+async function profilesById(
+  admin: ReturnType<typeof createAdminClient>,
+  userIds: string[],
+): Promise<Map<string, unknown>> {
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (!uniqueIds.length) return new Map();
+  const { data, error } = await admin.from("profiles")
+    .select("id,email,full_name")
+    .in("id", uniqueIds);
+  if (error) throw new ApiError(500, "DATABASE_ERROR", "Could not load conversation profiles.");
+  return new Map((data ?? []).map((profile) => [profile.id as string, profile]));
+}
 
 Deno.serve(apiHandler(async (req) => {
   requireMethod(req, ["GET", "POST"]);
@@ -31,18 +49,42 @@ Deno.serve(apiHandler(async (req) => {
           "Conversation not found or access denied.",
         );
       }
+      const viewerRole = await requireProjectRole(supabase, conversation.project_id as string, [
+        "owner",
+        "admin",
+        "member",
+      ]);
+      const profiles = await profilesById(admin, [conversation.user_id as string]);
       const { data: messages, error: messageError } = await supabase.from("messages").select("*")
         .eq("conversation_id", conversationId).order("created_at");
       if (messageError) throw new ApiError(500, "DATABASE_ERROR", "Could not load messages.");
-      return jsonResponse({ conversation, messages: messages ?? [] });
+      return jsonResponse({
+        conversation: {
+          ...conversation,
+          user: profiles.get(conversation.user_id as string) ?? null,
+        },
+        messages: messages ?? [],
+        viewer_role: viewerRole,
+      });
     }
     const projectId = url.searchParams.get("project_id");
     if (!projectId) throw new ApiError(400, "VALIDATION_ERROR", "project_id is required.");
     await requireProject(supabase, projectId);
+    const viewerRole = await requireProjectRole(supabase, projectId, ["owner", "admin", "member"]);
     const { data, error } = await supabase.from("conversations").select("*")
       .eq("project_id", projectId).order("updated_at", { ascending: false });
     if (error) throw new ApiError(500, "DATABASE_ERROR", "Could not list conversations.");
-    return jsonResponse({ conversations: data ?? [] });
+    const profiles = await profilesById(
+      admin,
+      (data ?? []).map((conversation) => conversation.user_id as string),
+    );
+    return jsonResponse({
+      conversations: (data ?? []).map((conversation) => ({
+        ...conversation,
+        user: profiles.get(conversation.user_id as string) ?? null,
+      })),
+      viewer_role: viewerRole,
+    });
   }
 
   const input = await readJson(req);
@@ -74,7 +116,7 @@ Deno.serve(apiHandler(async (req) => {
   let createdConversation = false;
   if (conversationId) {
     const { data, error } = await supabase.from("conversations").select("id")
-      .eq("id", conversationId).eq("project_id", projectId).maybeSingle();
+      .eq("id", conversationId).eq("project_id", projectId).eq("user_id", user.id).maybeSingle();
     if (error) throw new ApiError(500, "DATABASE_ERROR", "Could not validate the conversation.");
     if (!data) {
       throw new ApiError(404, "CONVERSATION_NOT_FOUND", "Conversation not found or access denied.");

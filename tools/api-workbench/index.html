@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ReplyMate API Workbench</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">R</div>
+          <div>
+            <h1>ReplyMate API Workbench</h1>
+            <p>Local GUI for Supabase Edge Functions</p>
+          </div>
+        </div>
+
+        <section class="card">
+          <h2>Connection</h2>
+          <label>
+            Supabase URL
+            <input id="supabase-url" placeholder="http://127.0.0.1:54321" />
+          </label>
+          <label>
+            Supabase anon key
+            <input id="anon-key" type="password" autocomplete="off" />
+          </label>
+          <button id="save-config" class="primary">Save connection</button>
+          <p id="connection-status" class="muted"></p>
+        </section>
+
+        <section class="card">
+          <h2>Auth</h2>
+          <label>
+            Email
+            <input id="email" type="email" autocomplete="username" />
+          </label>
+          <label>
+            Password
+            <input id="password" type="password" autocomplete="current-password" />
+          </label>
+          <div class="button-row">
+            <button id="signup">Sign up</button>
+            <button id="login" class="primary">Log in</button>
+          </div>
+          <button id="logout" class="ghost">Log out</button>
+          <p id="auth-status" class="muted"></p>
+        </section>
+
+        <section class="card">
+          <h2>Account</h2>
+          <button id="load-account" class="primary">Load account summary</button>
+          <label>
+            Full name
+            <input id="full-name" autocomplete="name" placeholder="Your name" />
+          </label>
+          <button id="update-profile">Update profile</button>
+          <div id="account-summary" class="mini-list"></div>
+        </section>
+
+        <section class="card">
+          <h2>Password reset</h2>
+          <button id="send-password-reset">Send reset email</button>
+          <label>
+            New password
+            <input id="new-password" type="password" autocomplete="new-password" />
+          </label>
+          <button id="update-password">Update password</button>
+          <p class="muted">Reset links return to this workbench origin during local testing.</p>
+        </section>
+
+        <section class="card">
+          <h2>TOTP MFA</h2>
+          <label>
+            Friendly name
+            <input id="mfa-friendly-name" placeholder="ReplyMate Workbench" />
+          </label>
+          <label>
+            Factor ID
+            <input id="mfa-factor-id" placeholder="MFA factor ID" />
+          </label>
+          <label>
+            Challenge ID
+            <input id="mfa-challenge-id" placeholder="Challenge ID" />
+          </label>
+          <label>
+            Code
+            <input id="mfa-code" inputmode="numeric" autocomplete="one-time-code" />
+          </label>
+          <div class="button-row">
+            <button id="list-mfa">List</button>
+            <button id="enroll-mfa">Enroll</button>
+            <button id="challenge-mfa">Challenge</button>
+            <button id="verify-mfa" class="primary">Verify</button>
+            <button id="unenroll-mfa" class="danger">Unenroll</button>
+          </div>
+          <div id="mfa-list" class="mini-list"></div>
+        </section>
+
+        <section class="card">
+          <h2>Selected IDs</h2>
+          <label>
+            Project ID
+            <input id="selected-project-id" placeholder="Choose or paste a project UUID" />
+          </label>
+          <label>
+            Conversation ID
+            <input id="selected-conversation-id" placeholder="Optional conversation UUID" />
+          </label>
+          <button id="save-selection">Save selected IDs</button>
+        </section>
+
+        <section class="card compact">
+          <h2>Webhook URLs</h2>
+          <p>Configure these in Stripe/Twilio dashboards, not as browser secrets.</p>
+          <code id="stripe-webhook-url">Stripe URL unavailable until project ref is known.</code>
+          <code id="twilio-webhook-url">Twilio URL unavailable until project ref is known.</code>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="hero">
+          <div>
+            <p class="eyebrow">Backend v1 tester</p>
+            <h2>Exercise the API before wiring the real apps.</h2>
+            <p>
+              This workbench signs in with Supabase Auth, sends your user JWT to the Edge Functions,
+              uploads text/Markdown via signed Storage URLs, and shows raw responses.
+            </p>
+          </div>
+          <div class="hero-actions">
+            <button id="refresh-all">Refresh data</button>
+            <button id="smoke-test" class="primary">Run smoke flow</button>
+          </div>
+        </header>
+
+        <div class="grid">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Projects</h3>
+              <button id="list-projects">List</button>
+            </div>
+            <div class="two-col">
+              <label>
+                Name
+                <input id="project-name" placeholder="Launch Agent" />
+              </label>
+              <label>
+                Agent name
+                <input id="project-agent-name" placeholder="Project Agent" />
+              </label>
+            </div>
+            <label>
+              Description
+              <textarea id="project-description" rows="2"></textarea>
+            </label>
+            <label>
+              Agent instructions
+              <textarea id="project-instructions" rows="3"></textarea>
+            </label>
+            <div class="four-col">
+              <label>
+                Model
+                <select id="project-model">
+                  <option value="">Default</option>
+                  <option value="gpt-5.4-nano">gpt-5.4-nano</option>
+                  <option value="gpt-5.4-mini">gpt-5.4-mini</option>
+                </select>
+              </label>
+              <label>
+                Chars/source
+                <input id="cap-context-chars" type="number" placeholder="100000" />
+              </label>
+              <label>
+                Chunks/project
+                <input id="cap-chunks" type="number" placeholder="500" />
+              </label>
+              <label>
+                Chats/day
+                <input id="cap-chats" type="number" placeholder="100" />
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="create-project" class="primary">Create</button>
+              <button id="get-project">Get selected</button>
+              <button id="update-project">Patch selected</button>
+              <button id="delete-project" class="danger">Delete selected</button>
+            </div>
+            <div id="projects-list" class="list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Members</h3>
+              <button id="list-members">List</button>
+            </div>
+            <div class="three-col">
+              <label>
+                Email
+                <input id="member-email" type="email" placeholder="teammate@example.com" />
+              </label>
+              <label>
+                Role
+                <select id="member-role">
+                  <option value="member">member</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
+              <label>
+                User ID
+                <input id="member-user-id" placeholder="For role/remove" />
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="add-member" class="primary">Add member</button>
+              <button id="update-member">Update role</button>
+              <button id="remove-member" class="danger">Remove</button>
+            </div>
+            <div id="members-list" class="list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Text context</h3>
+              <button id="list-sources">List sources</button>
+            </div>
+            <label>
+              Title
+              <input id="context-title" placeholder="Product facts" />
+            </label>
+            <label>
+              Text
+              <textarea
+                id="context-text"
+                rows="8"
+                placeholder="Paste project context here..."
+              ></textarea>
+            </label>
+            <div class="button-row">
+              <button id="add-context" class="primary">Add + embed</button>
+              <button id="delete-source" class="danger">Delete source</button>
+            </div>
+            <label>
+              Source ID for deletion
+              <input id="source-id" placeholder="Knowledge source UUID" />
+            </label>
+            <div id="sources-list" class="list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>File upload</h3>
+            </div>
+            <label>
+              Title
+              <input id="upload-title" placeholder="Optional source title" />
+            </label>
+            <label>
+              Text/Markdown file
+              <input
+                id="upload-file"
+                type="file"
+                accept=".txt, .md, .markdown, text/plain, text/markdown"
+              />
+            </label>
+            <button id="upload-process" class="primary">
+              Create signed URL → upload → process
+            </button>
+            <p class="muted">
+              v1 supports UTF-8 .txt, .md, and .markdown only. PDF/DOCX extraction is intentionally
+              out of scope for now.
+            </p>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-header">
+              <h3>Chat</h3>
+              <div class="button-row">
+                <button id="list-conversations">List conversations</button>
+                <button id="load-conversation">Load selected</button>
+              </div>
+            </div>
+            <label>
+              Message
+              <textarea
+                id="chat-message"
+                rows="4"
+                placeholder="Ask about the selected project's context..."
+              ></textarea>
+            </label>
+            <button id="send-chat" class="primary">Send RAG chat</button>
+            <div id="chat-history" class="chat"></div>
+            <div id="conversations-list" class="list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Raw function request</h3>
+            </div>
+            <div class="two-col">
+              <label>
+                Method
+                <select id="raw-method">
+                  <option>GET</option>
+                  <option>POST</option>
+                  <option>PATCH</option>
+                  <option>DELETE</option>
+                </select>
+              </label>
+              <label>
+                Function path
+                <input id="raw-path" value="v1-projects" />
+              </label>
+            </div>
+            <label>
+              JSON body
+              <textarea id="raw-body" rows="8" placeholder='{"project_id":"..."}'></textarea>
+            </label>
+            <button id="send-raw" class="primary">Send raw request</button>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Last response</h3>
+              <button id="copy-response">Copy JSON</button>
+            </div>
+            <pre id="response-output">{}</pre>
+          </section>
+        </div>
+
+        <section class="panel logs">
+          <div class="panel-header">
+            <h3>Request log</h3>
+            <button id="clear-log">Clear</button>
+          </div>
+          <div id="request-log"></div>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

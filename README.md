@@ -22,10 +22,13 @@ supabase/
     v1-context/
     v1-upload/
     v1-chat/
+    v1-account/
+    v1-outreach/
     v1-billing-webhook/
     v1-twilio-webhook/
   tests/database/             pgTAP RLS and vector-isolation tests
 scripts/smoke.sh              authenticated end-to-end curl smoke test
+tools/api-workbench/          local browser GUI for manual endpoint testing
 ```
 
 ## Prerequisites
@@ -56,6 +59,32 @@ npm run functions:serve
 
 The browser should use its normal Supabase client. `supabase.functions.invoke("v1-projects", ...)` automatically sends the active session token; raw requests must include both `Authorization: Bearer <user-jwt>` and `apikey: <anon-key>`.
 
+## API Workbench GUI
+
+The repository includes a local browser workbench for exercising the API while you build the Vercel webapp and mobile clients. It can sign up/log in through Supabase Auth, inspect account/plan/security metadata, test password reset/update and TOTP MFA flows, create/update/delete projects, manage members, add text context, upload/process text or Markdown files, list sources, run RAG chat, list/load conversations, and send raw function requests.
+
+Make sure local function CORS allows the workbench origin:
+
+```env
+ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:4173,http://localhost:4173
+```
+
+Then run the local stack, functions, and GUI in separate terminals:
+
+```bash
+npm run db:start
+npm run functions:serve
+npm run gui
+```
+
+Open:
+
+```text
+http://127.0.0.1:4173
+```
+
+The workbench serves only the Supabase URL, anon key, and project ref from local config. It does not expose the service-role key, OpenAI key, Stripe secret, or Twilio Auth Token. It stores the public anon key, selected IDs, and browser Supabase session in local storage for convenience.
+
 ## API test CLI
 
 The repository includes `scripts/replymate.ts`, a small Deno client for authentication, project/member management, text ingestion, signed file upload, source listing/deletion, chat, and a cleanup-by-default end-to-end smoke test.
@@ -69,23 +98,23 @@ export REPLYMATE_EMAIL="tester@example.com"
 export REPLYMATE_PASSWORD="replace-with-a-test-password"
 
 # Create the account once. If confirmation is enabled, confirm it before continuing.
-deno task api -- auth signup
+deno task api auth signup
 
 # Verify credentials, then exercise the complete API including OpenAI and Storage.
-deno task api -- auth whoami
-deno task api -- smoke
+deno task api auth whoami
+deno task api smoke
 ```
 
 Use `REPLYMATE_ACCESS_TOKEN` instead of email/password when testing an existing session. The CLI never writes credentials or tokens to disk.
 
 ```bash
-deno task api -- help
-deno task api -- projects list
-deno task api -- projects create "Launch Agent"
-deno task api -- context add PROJECT_UUID "Facts" "The launch color is cobalt blue."
-deno task api -- upload PROJECT_UUID ./notes.md
-deno task api -- chat PROJECT_UUID "What is the launch color?"
-deno task api -- smoke --keep  # retain the generated project for inspection
+deno task api help
+deno task api projects list
+deno task api projects create "Launch Agent"
+deno task api context add PROJECT_UUID "Facts" "The launch color is cobalt blue."
+deno task api upload PROJECT_UUID ./notes.md
+deno task api chat PROJECT_UUID "What is the launch color?"
+deno task api smoke --keep  # retain the generated project for inspection
 ```
 
 The smoke command creates a project, embeds text, uploads and processes Markdown, performs grounded chat, checks returned sources/conversations, and deletes the temporary project unless `--keep` is supplied.
@@ -98,6 +127,7 @@ The smoke command creates a project, embeds text, uploads and processes Markdown
 | `SUPABASE_ANON_KEY` | yes | Builds the caller-scoped RLS client |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Trusted writes after explicit authorization; never expose to Vercel/browser code |
 | `OPENAI_API_KEY` | yes | Embeddings and Responses API |
+| `OPENAI_MODE` | no | `live` by default; explicit `mock` enables deterministic local embeddings/chat without provider calls |
 | `OPENAI_CHAT_MODEL` | no | Default `gpt-5.4-nano`; only approved models are accepted |
 | `OPENAI_EMBEDDING_MODEL` | no | Must remain `text-embedding-3-small` in v1 |
 | `ALLOWED_ORIGINS` | yes | Exact comma-separated Vercel/local browser origins |
@@ -132,6 +162,8 @@ supabase functions deploy v1-projects
 supabase functions deploy v1-context
 supabase functions deploy v1-upload
 supabase functions deploy v1-chat
+supabase functions deploy v1-account
+supabase functions deploy v1-outreach
 supabase functions deploy v1-billing-webhook
 supabase functions deploy v1-twilio-webhook
 ```
@@ -155,6 +187,26 @@ const { data: project } = await supabase.functions.invoke("v1-projects", {
 });
 ```
 
+Account management also stays Supabase-native in the frontend:
+
+```ts
+await supabase.auth.signOut();
+
+await supabase.auth.resetPasswordForEmail(email, {
+  redirectTo: `${window.location.origin}/reset-password`,
+});
+
+await supabase.auth.updateUser({ password: newPassword });
+
+const { data: factors } = await supabase.auth.mfa.listFactors();
+```
+
+Use `v1-account` for the app dashboard/account page after the user is signed in:
+
+```ts
+const { data } = await supabase.functions.invoke("v1-account");
+```
+
 Never put `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, Stripe secrets, or Twilio secrets in Vercel variables exposed with a public prefix.
 
 ## API examples
@@ -166,6 +218,20 @@ export API_BASE="https://YOUR_PROJECT.supabase.co/functions/v1"
 export ANON_KEY="YOUR_ANON_KEY"
 export ACCESS_TOKEN="A_SIGNED_IN_USER_JWT"
 ```
+
+### Account summary
+
+```bash
+curl -sS "$API_BASE/v1-account" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ACCESS_TOKEN"
+
+curl -sS -X PATCH "$API_BASE/v1-account" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"full_name":"Nick Janocik"}'
+```
+
+The response includes profile metadata, user-level Stripe plan display state with a `Free` fallback, TOTP MFA status, and project summary counts. Billing remains display-only in v1.
 
 ### Projects
 
@@ -255,7 +321,33 @@ curl -sS "$API_BASE/v1-chat?conversation_id=CONVERSATION_UUID" \
   -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
-Conversations are private to their creator even when the project is shared.
+Owners/admins can audit all web-chat conversations in their projects. Regular members can only list and open conversations they created.
+
+### Simulated outreach and form intake
+
+`v1-outreach` is an authenticated owner/admin workflow. It simulates a Google Forms-style
+submission, requires explicit consent evidence before sending, normalizes phone numbers to E.164,
+and persists each mock SMS as an auditable project conversation. Supply `body` directly, or supply
+`goal` to have the project's configured OpenAI model draft the SMS first.
+
+```bash
+curl -sS -X POST "$API_BASE/v1-outreach" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"intake","project_id":"PROJECT_UUID","name":"Taylor","phone":"+15555550100","consent_status":"opted_in","consent_evidence":"Checked SMS consent on form","trigger_source":"google_forms_simulation"}'
+
+curl -sS -X POST "$API_BASE/v1-outreach" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"send","project_id":"PROJECT_UUID","contact_id":"CONTACT_UUID","goal":"Thank the customer for their inquiry and offer to schedule a call."}'
+
+curl -sS "$API_BASE/v1-outreach?project_id=PROJECT_UUID&resource=messages" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+With the default `MESSAGING_MODE=mock`, no external message is sent and the persisted result has
+provider `mock` and status `mock_delivered`. `MESSAGING_MODE=live` remains fail-closed until Twilio
+compliance, opt-out handling, and production routing are complete.
 
 ## Webhooks
 

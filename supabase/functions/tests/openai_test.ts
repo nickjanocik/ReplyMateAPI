@@ -91,13 +91,35 @@ Deno.test("OpenAI quota failures become actionable API errors", async () => {
       ),
     );
   const error = await assertRejects(
-    () => createChatResponse({
-      model: "gpt-5.4-nano",
-      instructions: "Use context.",
-      messages: [{ role: "user", content: "Question" }],
-    }, failingFetcher),
+    () =>
+      createChatResponse({
+        model: "gpt-5.4-nano",
+        instructions: "Use context.",
+        messages: [{ role: "user", content: "Question" }],
+      }, failingFetcher),
     ApiError,
     "quota is exhausted",
   );
   assertEquals(error.code, "OPENAI_QUOTA_EXCEEDED");
+});
+
+Deno.test("explicit mock mode returns deterministic embeddings and grounded chat", async () => {
+  Deno.env.set("OPENAI_MODE", "mock");
+  Deno.env.delete("OPENAI_API_KEY");
+  try {
+    const first = await createEmbeddings(["The launch color is cobalt blue."]);
+    const second = await createEmbeddings(["The launch color is cobalt blue."]);
+    assertEquals(first.embeddings, second.embeddings);
+    assertEquals(first.embeddings[0].length, 1536);
+
+    const response = await createChatResponse({
+      model: "gpt-5.4-nano",
+      instructions:
+        "Use context.\n\nRetrieved project context:\n[Source 1: Facts; chunk=1]\nThe launch color is cobalt blue.",
+      messages: [{ role: "user", content: "What is the launch color?" }],
+    });
+    assertEquals(response.content.includes("cobalt blue"), true);
+  } finally {
+    Deno.env.delete("OPENAI_MODE");
+  }
 });
