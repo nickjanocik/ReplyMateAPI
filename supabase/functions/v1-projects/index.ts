@@ -12,6 +12,7 @@ import {
   stringField,
   uuidField,
 } from "../_shared/validation.ts";
+import { assertProjectAllowance, loadEntitlement } from "../_shared/entitlements.ts";
 import type { JsonRecord } from "../_shared/types.ts";
 
 const PROJECT_FIELDS = [
@@ -207,6 +208,10 @@ Deno.serve(apiHandler(async (req) => {
   if (req.method === "POST") {
     const values = projectValues(input, true);
     const admin = createAdminClient();
+    // Checked against the plan the database says they have, not anything the
+    // request asserted, and before the insert so the limit is a refusal rather
+    // than a project they can see but not use.
+    assertProjectAllowance(await loadEntitlement(admin, user.id));
     const { data, error } = await admin.from("projects").insert({ ...values, owner_id: user.id })
       .select(PROJECT_FIELDS).single();
     if (error) {

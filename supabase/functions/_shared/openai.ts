@@ -1,4 +1,10 @@
 import { ApiError } from "./errors.ts";
+import {
+  createGeminiChatResponse,
+  createGeminiEmbeddings,
+  getGeminiChatModel,
+  getGeminiEmbeddingModel,
+} from "./providers/gemini.ts";
 import type { ConversationMessage } from "./types.ts";
 
 const API_BASE = "https://api.openai.com/v1";
@@ -27,6 +33,33 @@ export const EMBEDDING_MODEL_PRICES: Readonly<Record<string, number>> = {
 };
 
 type Fetcher = typeof fetch;
+
+/**
+ * Which service generates chat replies.
+ *
+ * Only generation is switchable. Embeddings stay on OpenAI because
+ * `knowledge_chunks.embedding` is a fixed `extensions.vector(1536)` column and
+ * the match RPCs are typed to it — moving those to another provider needs a
+ * migration plus a re-embed of every existing chunk.
+ */
+export function chatProvider(): "openai" | "gemini" {
+  const provider = (Deno.env.get("LLM_PROVIDER") ?? "openai").toLowerCase();
+  if (provider === "openai" || provider === "gemini") return provider;
+  throw new ApiError(500, "SERVER_MISCONFIGURED", "LLM_PROVIDER must be openai or gemini.");
+}
+
+/**
+ * Per-million-token prices for the configured Gemini model, read from the
+ * environment. Deliberately not hardcoded: publishing a wrong rate would make
+ * every usage estimate quietly wrong, so an unset price reports 0 instead.
+ */
+function geminiPrice(): ModelPrice | null {
+  const input = Number(Deno.env.get("GEMINI_INPUT_PRICE_PER_MTOK") ?? "");
+  const output = Number(Deno.env.get("GEMINI_OUTPUT_PRICE_PER_MTOK") ?? "");
+  if (!Number.isFinite(input) || !Number.isFinite(output)) return null;
+  const cached = Number(Deno.env.get("GEMINI_CACHED_INPUT_PRICE_PER_MTOK") ?? "");
+  return { input, cachedInput: Number.isFinite(cached) ? cached : input, output };
+}
 
 function providerMode(): "live" | "mock" {
   const mode = (Deno.env.get("OPENAI_MODE") ?? "live").toLowerCase();
@@ -82,6 +115,9 @@ function apiKey(): string {
 }
 
 export function getChatModel(requested?: string | null): string {
+  // Gemini ids are validated by Gemini itself; the OpenAI price table does not
+  // apply to them.
+  if (chatProvider() === "gemini") return getGeminiChatModel(requested);
   const model = requested || Deno.env.get("OPENAI_CHAT_MODEL") || "gpt-5.4-nano";
   if (!CHAT_MODEL_PRICES[model]) {
     throw new ApiError(
@@ -94,6 +130,7 @@ export function getChatModel(requested?: string | null): string {
 }
 
 export function getEmbeddingModel(): string {
+  if (chatProvider() === "gemini") return getGeminiEmbeddingModel();
   const model = Deno.env.get("OPENAI_EMBEDDING_MODEL") || "text-embedding-3-small";
   if (!EMBEDDING_MODEL_PRICES[model]) {
     throw new ApiError(
@@ -187,6 +224,10 @@ export async function createEmbeddings(
       model,
     };
   }
+  if (chatProvider() === "gemini") {
+    return await createGeminiEmbeddings(inputs, fetcher);
+  }
+
   const payload = await openAIRequest<EmbeddingsResponse>("/embeddings", {
     model,
     input: inputs,
@@ -247,6 +288,15 @@ export async function createChatResponse(
       },
     };
   }
+  if (chatProvider() === "gemini") {
+    return await createGeminiChatResponse({
+      model: options.model,
+      instructions: options.instructions,
+      messages: options.messages,
+      maxOutputTokens: options.maxOutputTokens,
+    }, fetcher);
+  }
+
   const payload = await openAIRequest<ResponsesResponse>("/responses", {
     model,
     instructions: options.instructions,
@@ -274,7 +324,8 @@ export async function createChatResponse(
 }
 
 export function estimateChatCost(model: string, usage: TokenUsage): number {
-  const price = CHAT_MODEL_PRICES[model];
+  const price = CHAT_MODEL_PRICES[model] ??
+    (chatProvider() === "gemini" ? geminiPrice() : null);
   if (!price) throw new ApiError(500, "UNPRICED_MODEL", `No pricing is configured for ${model}.`);
   const cached = Math.min(usage.cachedInputTokens, usage.inputTokens);
   const regular = usage.inputTokens - cached;
@@ -283,6 +334,10 @@ export function estimateChatCost(model: string, usage: TokenUsage): number {
 }
 
 export function estimateEmbeddingCost(model: string, inputTokens: number): number {
+  if (chatProvider() === "gemini") {
+    const rate = Number(Deno.env.get("GEMINI_EMBEDDING_PRICE_PER_MTOK") ?? "");
+    return (Number.isFinite(rate) ? rate : 0) * (inputTokens / 1_000_000);
+  }
   const price = EMBEDDING_MODEL_PRICES[model];
   if (price === undefined) {
     throw new ApiError(500, "UNPRICED_MODEL", `No pricing is configured for ${model}.`);

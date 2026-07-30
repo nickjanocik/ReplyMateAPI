@@ -22,7 +22,7 @@ port = 54324
 [auth]
 enabled = true
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["http://localhost:3000/**", "http://localhost:3001/**", "http://127.0.0.1:3001/**", "http://127.0.0.1:4173/**", "http://localhost:4173/**"]
+additional_redirect_urls = ["http://localhost:3000/**", "http://localhost:3001/**", "http://127.0.0.1:3001/**", "http://127.0.0.1:4173/**", "http://localhost:4173/**", "http://localhost:3737/**", "http://127.0.0.1:3737/**"]
 enable_signup = true
 
 [storage]
@@ -51,4 +51,10 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.v1-twilio-webhook]
+verify_jwt = false
+
+# Called by a customer's Google Apps Script trigger, which has no Supabase
+# session. Authentication is the per-project token in X-ReplyMate-Token,
+# checked inside the function.
+[functions.v1-form-intake]
 verify_jwt = false

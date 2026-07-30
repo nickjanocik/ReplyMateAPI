@@ -1,4 +1,4 @@
-import { withCors } from "./cors.ts";
+import { corsHeaders } from "./cors.ts";
 
 export class ApiError extends Error {
   constructor(
@@ -52,18 +52,35 @@ export function apiHandler(
 ): (req: Request) => Promise<Response> {
   return async (req) => {
     const requestId = crypto.randomUUID();
+
+    // Resolve CORS *before* running the handler. Validating it afterwards
+    // meant a request from a disallowed origin still executed — creating rows
+    // and spending tokens — and only then had its response rejected, which the
+    // browser surfaces as an opaque network error.
+    let cors: Headers;
     try {
-      if (req.method === "OPTIONS") {
-        return withCors(req, new Response(null, { status: 204 }));
-      }
-      return withCors(req, await handler(req, requestId));
+      cors = corsHeaders(req);
     } catch (error) {
-      const response = errorResponse(error, requestId);
-      try {
-        return withCors(req, response);
-      } catch (corsError) {
-        return errorResponse(corsError, requestId);
-      }
+      return errorResponse(error, requestId);
     }
+
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: cors });
+    }
+
+    let response: Response;
+    try {
+      response = await handler(req, requestId);
+    } catch (error) {
+      response = errorResponse(error, requestId);
+    }
+
+    const headers = new Headers(response.headers);
+    for (const [key, value] of cors) headers.set(key, value);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   };
 }

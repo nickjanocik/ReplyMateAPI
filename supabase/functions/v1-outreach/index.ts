@@ -6,17 +6,39 @@ import {
 } from "../_shared/auth.ts";
 import { ApiError, apiHandler, jsonResponse, requireMethod } from "../_shared/errors.ts";
 import { createChatResponse, estimateChatCost } from "../_shared/openai.ts";
+import { generateFormToken, hashFormToken, tokenPreview } from "../_shared/formIntake.ts";
 import {
   assertOutreachConsent,
   normalizeE164Phone,
   OUTREACH_CONSENT_STATUSES,
 } from "../_shared/outreach.ts";
+import { assertReplyAllowance, loadEntitlement } from "../_shared/entitlements.ts";
 import { messagingProvider } from "../_shared/providers/index.ts";
 import { completeAgentRun, recordUsage, startAgentRun } from "../_shared/usage.ts";
 import { enumField, readJson, stringField, uuidField } from "../_shared/validation.ts";
 import type { JsonRecord, Project } from "../_shared/types.ts";
 
-const TRIGGER_SOURCES = ["manual", "google_forms_simulation", "api_simulation"] as const;
+const TRIGGER_SOURCES = [
+  "manual",
+  "google_form",
+  "google_forms_simulation",
+  "api_simulation",
+] as const;
+
+/** Shape returned to the dashboard; never includes the stored token hash. */
+function presentFormSource(row: JsonRecord, plaintextToken?: string): JsonRecord {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    label: row.label ?? null,
+    token_preview: row.token_preview,
+    status: row.status,
+    response_count: row.response_count ?? 0,
+    last_response_at: row.last_response_at ?? null,
+    created_at: row.created_at,
+    ...(plaintextToken ? { token: plaintextToken } : {}),
+  };
+}
 
 async function contactForProject(
   admin: ReturnType<typeof createAdminClient>,
@@ -117,14 +139,65 @@ Deno.serve(apiHandler(async (req) => {
       if (error) throw new ApiError(500, "DATABASE_ERROR", "Could not list outreach messages.");
       return jsonResponse({ messages: data ?? [] });
     }
-    throw new ApiError(400, "VALIDATION_ERROR", "resource must be contacts or messages.");
+    if (resource === "form_sources") {
+      const { data, error } = await supabase.from("project_form_sources").select("*")
+        .eq("project_id", projectId).order("created_at", { ascending: false }).limit(limit);
+      if (error) throw new ApiError(500, "DATABASE_ERROR", "Could not list form connections.");
+      return jsonResponse({
+        form_sources: (data ?? []).map((row) => presentFormSource(row as JsonRecord)),
+      });
+    }
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "resource must be contacts, messages, or form_sources.",
+    );
   }
 
   const input = await readJson(req);
-  const action = enumField(input, "action", ["intake", "send", "simulate_reply"] as const, true)!;
+  const action = enumField(
+    input,
+    "action",
+    ["intake", "send", "simulate_reply", "create_form_source", "revoke_form_source"] as const,
+    true,
+  )!;
   const projectId = uuidField(input, "project_id")!;
   const project = await requireProject(supabase, projectId);
   await requireProjectRole(supabase, projectId, ["owner", "admin"]);
+
+  if (action === "create_form_source") {
+    const label = stringField(input, "label", { max: 120 }) ?? "Google Form";
+    // The plaintext token exists only in this response; we persist its hash.
+    const token = generateFormToken();
+    const { data, error } = await admin.from("project_form_sources").insert({
+      project_id: projectId,
+      created_by: user.id,
+      label,
+      token_hash: await hashFormToken(token),
+      token_preview: tokenPreview(token),
+    }).select("*").single();
+    if (error) {
+      throw new ApiError(500, "DATABASE_ERROR", "Could not create the form connection.");
+    }
+    return jsonResponse({ form_source: presentFormSource(data as JsonRecord, token) }, 201);
+  }
+
+  if (action === "revoke_form_source") {
+    const formSourceId = uuidField(input, "form_source_id")!;
+    const { data, error } = await admin.from("project_form_sources")
+      .update({ status: "revoked", updated_at: new Date().toISOString() })
+      .eq("id", formSourceId).eq("project_id", projectId)
+      .select("*").maybeSingle();
+    if (error) throw new ApiError(500, "DATABASE_ERROR", "Could not revoke the form connection.");
+    if (!data) {
+      throw new ApiError(
+        404,
+        "FORM_SOURCE_NOT_FOUND",
+        "Form connection not found in this project.",
+      );
+    }
+    return jsonResponse({ form_source: presentFormSource(data as JsonRecord) });
+  }
 
   if (action === "intake") {
     const phone = normalizeE164Phone(
@@ -199,6 +272,13 @@ Deno.serve(apiHandler(async (req) => {
   const contactId = uuidField(input, "contact_id")!;
   const contact = await contactForProject(admin, projectId, contactId);
   const to = assertOutreachConsent(contact);
+
+  // The owner's plan pays for the send, not the caller's — a member on a shared
+  // project has no subscription of their own. Checked before the draft so a
+  // blocked send does not spend model tokens first.
+  const ownerId = String(project.owner_id);
+  const allowance = assertReplyAllowance(await loadEntitlement(admin, ownerId));
+
   const suppliedBody = stringField(input, "body", { min: 1, max: 1600 });
   const goal = stringField(input, "goal", { min: 1, max: 2000 });
   if (!suppliedBody && !goal) {
@@ -277,17 +357,31 @@ Deno.serve(apiHandler(async (req) => {
       projectId,
       userId: user.id,
       runId,
-      eventType: "outreach_message",
+      eventType: allowance.overagePerReply > 0 ? "outreach_message_overage" : "outreach_message",
       quantity: 1,
       unit: "message",
+      // `estimated_cost` is our provider spend, which the overage rate is not —
+      // that is what we charge. Recording the billable amount in metadata keeps
+      // the two from being summed together into a meaningless number.
       estimatedCost: 0,
       provider: result.provider,
-      metadata: { contact_id: contactId, outbound_message_id: outbound.id },
+      metadata: {
+        contact_id: contactId,
+        outbound_message_id: outbound.id,
+        ...(allowance.overagePerReply > 0
+          ? { billable_overage_usd: allowance.overagePerReply }
+          : {}),
+      },
     });
     return jsonResponse({
       message: sent,
       conversation_id: conversation.id,
       simulated: result.provider === "mock",
+      billing: {
+        replies_included: allowance.limit,
+        replies_remaining: Math.max(0, allowance.remaining - 1),
+        overage_charged_usd: allowance.overagePerReply,
+      },
     }, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

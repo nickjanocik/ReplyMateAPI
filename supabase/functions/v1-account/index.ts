@@ -5,6 +5,7 @@ import {
   securitySummaryFromFactors,
   tenureDays,
 } from "../_shared/account.ts";
+import { entitlementSummary, loadEntitlement } from "../_shared/entitlements.ts";
 import { ApiError, apiHandler, jsonResponse, requireMethod } from "../_shared/errors.ts";
 import { readJson, stringField } from "../_shared/validation.ts";
 import type { JsonRecord, ProjectRole } from "../_shared/types.ts";
@@ -168,7 +169,13 @@ Deno.serve(apiHandler(async (req) => {
   const subscription = chooseCurrentSubscription((subscriptions ?? []) as JsonRecord[]);
   const createdAt = profile?.created_at ?? user.created_at;
 
+  // `plan` stays the flat legacy shape the dashboard already renders; `billing`
+  // carries the entitlements and meter so the account page does not need a
+  // second round trip to /v1-billing just to draw a usage bar.
+  const entitlement = await loadEntitlement(createAdminClient(), user.id);
+
   return jsonResponse({
+    billing: entitlementSummary(entitlement),
     user: {
       id: user.id,
       email: profile?.email ?? user.email ?? null,

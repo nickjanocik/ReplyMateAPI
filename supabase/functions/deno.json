@@ -10,7 +10,7 @@
   "tasks": {
     "test": "deno test --allow-env tests",
     "lint": "deno lint . && deno fmt --check .",
-    "check": "deno check v1-projects/index.ts v1-context/index.ts v1-upload/index.ts v1-chat/index.ts v1-account/index.ts v1-outreach/index.ts v1-billing-webhook/index.ts v1-twilio-webhook/index.ts"
+    "check": "deno check v1-form-intake/index.ts v1-projects/index.ts v1-context/index.ts v1-upload/index.ts v1-chat/index.ts v1-account/index.ts v1-outreach/index.ts v1-billing/index.ts v1-billing-webhook/index.ts v1-twilio-webhook/index.ts"
   },
   "fmt": {
     "lineWidth": 100,
